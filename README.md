@@ -1,2 +1,2 @@
 # DSS_Capstone_Project
-Data Science Capstone Project
+The Data Science Capstone Project milestone report (HTML) is here: <link>
