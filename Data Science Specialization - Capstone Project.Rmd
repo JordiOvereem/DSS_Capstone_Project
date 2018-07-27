@@ -1,0 +1,163 @@
+---
+title: "Data Science Specialization - Capstone Project"
+author: "Jordi Overeem"
+date: "25 juli 2018"
+output: html_document
+---
+## Introduction
+This is the Exploratory Data Analysis part of the milestone report of the Coursera Data Science Capstone project.
+The end goal is to build an application which uses a predictive text model.
+The end user will provide a word or a phrase and the application will try to predict the next word(s).
+The model will use a corpus (a collection of English text) that is compiled from 3 sources: news, blogs, and tweets.
+
+First, data will be loaded and cleaned.
+Next, Natural Language Processing applications in R (tm and RWeka) are used for tokenizing n-grams as a first step toward building a predictive model.
+
+## Set directory and load libraries
+```{r echo=T, results='hide'}
+setwd("C:/Users/joov2/Desktop/Capstone Project")
+library(tm, warn.conflicts=F, quietly=T)
+library(ggplot2, warn.conflicts=F, quietly=T)
+library(dplyr, warn.conflicts=F, quietly=T)
+library(RWeka, warn.conflicts=F, quietly=T)
+library(stringi, warn.conflicts=F, quietly=T)
+```
+
+## Load data
+It is assumed that the data source is: //d396qusza40orc.cloudfront.net/dsscapstone/dataset/Coursera-SwiftKey.zip.
+These data will be used for training a model further on in the project.
+The data is downloaded from this source and unzipped on Desktop. From here it can be loaded.
+```{r}
+blogs_file <- file("./Coursera-SwiftKey/final/en_US/en_US.blogs.txt","r")
+blogs <- readLines(blogs_file, encoding = "UTF-8", skipNul = TRUE)
+close(blogs_file)
+
+news_file <- file("./Coursera-SwiftKey/final/en_US/en_US.news.txt","r")
+news <- readLines(news_file, encoding = "UTF-8", skipNul = TRUE)
+close(news_file)
+
+twitter_file <- file("./Coursera-SwiftKey/final/en_US/en_US.twitter.txt","r")
+twitter <- readLines(twitter_file, encoding = "UTF-8", skipNul = TRUE)
+close(twitter_file)
+```
+
+## Descriptive statistics
+With the code below the number of characters, number of words and the number of lines are determined for all 3 datasets.
+Also, some descriptive statistics on the number of words per line and the number of characters per line are calculated.
+```{r}
+words_per_line <- sapply(list(blogs,news,twitter),function(x) summary(stri_count_words(x))[c('Min.','Median','Mean','Max.')])
+chars_per_line <- sapply(list(blogs,news,twitter), function(x) summary(nchar(x))[c('Min.','1st Qu.','Median','Mean','3rd Qu.','Max.')])
+
+rownames(words_per_line) <- c('Min._words_per_line','Median_words_per_line','Mean_words_per_line','Max._words_per_line')
+rownames(chars_per_line) <- c('Min._chars_per_line', '1st_Qu._chars_per_line', 'Median_chars_per_line', 'Mean_chars_per_line', '3rd_Qu._chars_per_line', 'Max._chars_per_line')
+
+counts <- data.frame(Datasource=c("blogs","news","twitter"),      
+  t(rbind(sapply(list(blogs,news,twitter),stri_stats_general)[c('Lines','Chars'),],
+    Words=sapply(list(blogs,news,twitter),stri_stats_latex)['Words',]
+    )
+  ))
+
+stats_lines <- data.frame(Datasource=c("blogs","news","twitter"),      
+  t(words_per_line)
+  )
+
+stats_chars <- data.frame(Datasource=c("blogs","news","twitter"),      
+  t(chars_per_line)
+  )
+
+counts
+stats_lines
+stats_chars
+```
+One can notice that on average blogs seem to have the most words per line and tweets have the least words per line.
+This was to be expected since Twitter has limits on the number of characters in tweets.
+
+Also interesting is the fact that while the mean and max number of words in lines are both higher for blogs compared to news, the median is lower suggesting greater variance in linesize with blogs.
+
+## Clean and sample data
+With the code below non-English characters are removed and the data are compiled into a sample dataset that is composed of 1% of each of the 3 original datasets (blogs, news, twitter).
+Next, the data are transformed into a cleaned corpus by:
+
+1) converting al characters to lower case;
+
+2) removing punctuation;
+
+3) removing numbers;
+
+4) stripping white space and
+
+5) converting to plain text.
+```{r}
+blogs <- iconv(blogs, "latin1", "ASCII", sub="")
+news <- iconv(news, "latin1", "ASCII", sub="")
+twitter <- iconv(twitter, "latin1", "ASCII", sub="")
+
+set.seed(2507)
+sample <- c(sample(blogs, length(blogs)/100), sample(news, length(news)/100), sample(twitter, length(twitter)/100))
+
+corpus <- VCorpus(VectorSource(sample))
+corpus <- tm_map(corpus, tolower)
+corpus <- tm_map(corpus, removePunctuation)
+corpus <- tm_map(corpus, removeNumbers)
+corpus <- tm_map(corpus, stripWhitespace)
+corpus <- tm_map(corpus, PlainTextDocument)
+```
+
+## Tokenize and calculate frequencies of N-Grams
+The RWeka package is used for tokenizing the sample, creating matrices of uni-, bi- and trigrams and calculating the frequencies of the n-grams.
+```{r}
+# Functions for tokenizing sample
+uni <- function(x) NGramTokenizer(x, Weka_control(min = 1, max = 1))
+bi <- function(x) NGramTokenizer(x, Weka_control(min = 2, max = 2))
+tri <- function(x) NGramTokenizer(x, Weka_control(min = 3, max = 3))
+
+# Create matrices
+uni_matrix <- TermDocumentMatrix(corpus, control = list(tokenize = uni))
+bi_matrix <- TermDocumentMatrix(corpus, control = list(tokenize = bi))
+tri_matrix <- TermDocumentMatrix(corpus, control = list(tokenize = tri))
+
+# Calculate frequencies
+uni_corpus <- findFreqTerms(uni_matrix, lowfreq = 100, highfreq = Inf)
+bi_corpus <- findFreqTerms(bi_matrix, lowfreq = 50, highfreq = Inf)
+tri_corpus <- findFreqTerms(tri_matrix, lowfreq = 30, highfreq = Inf)
+
+uni_frequencies <- rowSums(as.matrix(uni_matrix[uni_corpus,]))
+df1 <- data.frame(word = names(uni_frequencies), frequency = uni_frequencies)
+
+bi_frequencies <- rowSums(as.matrix(bi_matrix[bi_corpus,]))
+df2 <- data.frame(word = names(bi_frequencies), frequency = bi_frequencies)
+
+tri_frequencies <- rowSums(as.matrix(tri_matrix[tri_corpus,]))
+df3 <- data.frame(word = names(tri_frequencies), frequency = tri_frequencies)
+```
+
+## Plot top N-Grams
+Finally, plots are made from the top-30 uni-, bi- and trigrams by frequency:
+```{r}
+plot_function <- function(data, title, count) {
+  df <- data[order(-data$frequency),][1:count,] 
+  ggplot(df, aes(x = reorder(word, -frequency), y = frequency)) + geom_bar(stat = "identity") +
+    labs(title = title) + xlab("Words") + ylab("Frequency") +
+    theme(axis.text.x = element_text(angle = 90, hjust = 1))
+}
+
+plot1 <- plot_function(df1,"Unigrams",30)
+plot2 <- plot_function(df2,"Bigrams",30)
+plot3 <- plot_function(df3,"Trigrams",30)
+plot1
+plot2
+plot3
+```
+
+## Plans for creating the prediction algorithm and Shiny app
+The next steps are to:
+
+1) look in to the possibility of creating a "small library" with stored n-grams, just for efficiently looking up the most common n-grams without having to run a complete model;
+
+2) build a predictive algorithm which uses a comparable n-gram model as in the analysis above which looks up the most likely n-grams by frequency;
+
+3) build an application with Shiny in which the predictive algorithm is deployed that shows the most likely n-grams after typing a phrase, inclusing an embedded tutorial. Probably, 4- and 5-grams will be added as well;
+
+4) finetune the application so that it works relatively fast and
+
+5) create a slide deck as reference work.
